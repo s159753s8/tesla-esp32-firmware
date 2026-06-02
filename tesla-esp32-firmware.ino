@@ -1,5 +1,5 @@
 /*
- * 特斯拉远程控制 - ESP32 + ML307R 固件（修复版）
+ * 特斯拉远程控制 - ESP32 + ML307R 固件
  * 功能：通过4G模块连接MQTT，订阅控制指令
  *
  * 接线：GPIO17(TX2)→RX, GPIO16(RX2)→TX, 5V→VIN, GND→GND
@@ -36,6 +36,22 @@ String sendAT(String cmd, int waitTime = 1000) {
   return response;
 }
 
+// ==================== 发送MQTT消息（ML307R专用）====================
+void mqttPublish(const char* topic, const char* message, int qos = 0) {
+  // ML307R MQTTPUB格式：AT+MQTTPUB=<connID>,"<topic>",<qos>,<retain>,<dup>,<msg_len>,<message>
+  // 注意：message必须加引号，长度是数字
+  String cmd = "AT+MQTTPUB=0,\"";
+  cmd += topic;
+  cmd += "\",";
+  cmd += String(qos);
+  cmd += ",0,0,";
+  cmd += String(strlen(message));  // 长度是数字，不带引号
+  cmd += ",\"";
+  cmd += message;
+  cmd += "\"";
+  sendAT(cmd, 2000);
+}
+
 // ==================== 初始化 ====================
 void setup() {
   Serial.begin(115200);      // 调试串口
@@ -59,7 +75,6 @@ void setup() {
 
   // 配置MQTT连接
   Serial.println("=== 配置MQTT连接 ===");
-  // AT+MQTTCONN=<connID>,"<host>",<port>,"<clientID>","<username>","<password>
   String mqttCmd = "AT+MQTTCONN=0,\"";
   mqttCmd += mqtt_server;
   mqttCmd += "\",";
@@ -72,20 +87,14 @@ void setup() {
 
   // 订阅主题
   Serial.println("=== 订阅主题 ===");
-  // ML307R格式：AT+MQTTSUB=<connID>,"<topic>",<qos>
   String subCmd = "AT+MQTTSUB=0,\"";
   subCmd += sub_topic;
   subCmd += "\",1";
   sendAT(subCmd, 2000);
 
-  // 发送上线消息（修复：payload去掉外层引号）
+  // 发送上线消息
   Serial.println("=== 发送上线状态 ===");
-  // 格式：AT+MQTTPUB=<connID>,"<topic>",<qos>,<retain>,<dup>,<payload>
-  // ML307R的payload参数不加额外引号，直接写字符串内容
-  String pubCmd = "AT+MQTTPUB=0,\"";
-  pubCmd += pub_topic;
-  pubCmd += "\",0,0,0,ESP32已上线";
-  sendAT(pubCmd, 2000);
+  mqttPublish(pub_topic, "ESP32已上线");
 
   Serial.println("=== 初始化完成，进入监听模式 ===");
 }
@@ -104,10 +113,8 @@ void loop() {
 
       if (msg.indexOf("lock") >= 0) {
         Serial.println(">>> 执行：锁车");
-        // TODO: 控制GPIO13输出LOW 300ms
       } else if (msg.indexOf("unlock") >= 0) {
         Serial.println(">>> 执行：解锁");
-        // TODO: 控制GPIO13输出LOW两次
       }
     }
   }
@@ -117,11 +124,7 @@ void loop() {
   if (millis() - lastHeartbeat > 30000) {
     lastHeartbeat = millis();
     Serial.println("[心跳] 设备在线");
-    // 修复：payload去掉引号
-    String pubCmd = "AT+MQTTPUB=0,\"";
-    pubCmd += pub_topic;
-    pubCmd += "\",0,0,0,heartbeat";
-    sendAT(pubCmd, 1000);
+    mqttPublish(pub_topic, "heartbeat");
   }
 
   delay(100);
