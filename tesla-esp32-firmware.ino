@@ -1,11 +1,14 @@
 /*
- * 特斯拉 Model X 100D 远程控制 - ESP32 固件 v2.1 (GPIO2测试版)
+ * 特斯拉 Model X 100D 远程控制 - ESP32 固件 v2.2
  * 
- * 功能：GPIO2直驱LED测试
- * 用于验证GPIO输出是否正常
+ * 修复：GPIO13 LED测试逻辑（和GPIO2一样）
  * 
- * 接线：GPIO2 → 220Ω电阻 → LED正极(长脚) → LED负极(短脚) → GND
- * 注意：ESP32板载GPIO2的LED已经是共阳接法，可以直接测试
+ * 变化：GPIO13改为OUTPUT+HIGH/LOW模式（和GPIO2一样）
+ * 原因：GPIO13平时INPUT测到0.3V不稳定，改为OUTPUT+HIGH保持3.3V稳定
+ * 
+ * 使用场景：
+ * - 当前：GPIO13接LED测试（验证GPIO13输出正常）
+ * - 将来：GPIO13接钥匙（需改回INPUT/OUTPUT开漏模式）
  */
 
 #include <HardwareSerial.h>
@@ -14,70 +17,80 @@
 const char* MQTT_SERVER = "www.owill.shopping";
 const int   MQTT_PORT   = 1883;
 const char* CLIENT_ID   = "esp32-tesla-001";
-const char* SUB_TOPIC   = "tesla/control";   // 订阅：手机→ESP32
-const char* PUB_TOPIC   = "tesla/status";    // 发布：ESP32→手机
+const char* SUB_TOPIC   = "tesla/control";
+const char* PUB_TOPIC   = "tesla/status";
 
 // ==================== 串口配置（ML307R）====================
 HardwareSerial ML307R(1);  // UART2: GPIO16=RX, GPIO17=TX
 
-// ==================== GPIO引脚定义（测试用GPIO2）====================
-const int PIN_LOCK      = 2;   // 测试用GPIO2（板载LED）
+// ==================== GPIO引脚定义 ====================
+const int PIN_LOCK      = 13;  // GPIO13（当前用于LED测试）
 const int PIN_LEFT      = 14;
 const int PIN_RIGHT     = 25;
 const int PIN_TRUNK     = 26;
 const int PIN_FRUNK     = 27;
+const int PIN_TEST_LED  = 2;   // GPIO2（板载LED）
 
-// ==================== 时序参数（可调）====================
+// ==================== 时序参数 ====================
 const int PULSE_DURATION   = 300;
 const int DOUBLE_INTERVAL  = 100;
-const int AUTO_LOCK_MS     = 600000; // 10分钟自动锁车
+const int AUTO_LOCK_MS     = 600000; // 10分钟
 
 // ==================== 全局状态 ====================
 bool  autoLockFlag    = false;
 unsigned long autoLockStart = 0;
 bool  actionLocked    = false;
 
-// ==================== GPIO2 LED测试函数 ====================
-// GPIO2接法：3.3V→LED→GPIO2→GND（板载LED已串联电阻）
-// GPIO2输出LOW时LED亮，输出HIGH时LED灭
+// ==================== GPIO13 LED测试函数（和GPIO2一样）====================
+// GPIO13平时保持HIGH（3.3V），动作时拉LOW（0V）
+// 这样LED就能亮了（3.3V→LED→GPIO13形成电流）
 
-void testGPIO2Once() {
-  Serial.println("[GPIO2测试] LOW脉冲×1 开始");
+void testGPIO13Once() {
+  Serial.println("[GPIO13测试] LOW脉冲×1");
+  pinMode(PIN_LOCK, OUTPUT);
   digitalWrite(PIN_LOCK, LOW);  // LED亮
-  Serial.printf("[GPIO2] 输出LOW (LED应点亮)\n");
   delay(PULSE_DURATION);
-  digitalWrite(PIN_LOCK, HIGH);  // LED灭
-  Serial.printf("[GPIO2] 输出HIGH (LED应熄灭)\n");
-  Serial.println("[GPIO2测试] LOW脉冲×1 完成");
+  digitalWrite(PIN_LOCK, HIGH); // LED灭
+  Serial.println("[GPIO13测试] 完成");
 }
 
-void testGPIO2Twice() {
-  Serial.println("[GPIO2测试] LOW脉冲×2 开始");
+void testGPIO13Twice() {
+  Serial.println("[GPIO13测试] LOW脉冲×2");
   // 第1次
+  pinMode(PIN_LOCK, OUTPUT);
   digitalWrite(PIN_LOCK, LOW);
-  Serial.printf("[GPIO2] 第1次 LOW (LED亮)\n");
+  Serial.println("[GPIO13] 第1次 LOW (LED亮)");
   delay(PULSE_DURATION);
   digitalWrite(PIN_LOCK, HIGH);
-  Serial.printf("[GPIO2] 第1次完成，间隔%dms\n", DOUBLE_INTERVAL);
+  Serial.printf("[GPIO13] 第1次完成，间隔%dms\n", DOUBLE_INTERVAL);
   delay(DOUBLE_INTERVAL);
   // 第2次
   digitalWrite(PIN_LOCK, LOW);
-  Serial.printf("[GPIO2] 第2次 LOW (LED亮)\n");
+  Serial.println("[GPIO13] 第2次 LOW (LED亮)");
   delay(PULSE_DURATION);
   digitalWrite(PIN_LOCK, HIGH);
-  Serial.printf("[GPIO2] 第2次完成\n");
-  Serial.println("[GPIO2测试] LOW脉冲×2 完成");
+  Serial.println("[GPIO13] 第2次完成");
 }
 
-// ==================== 安全脉冲GPIO（两次，用于实际控制）====================
-void safePulseTwice(int pin) {
-  for (int i = 0; i < 2; i++) {
-    pinMode(pin, OUTPUT);
-    digitalWrite(pin, LOW);
-    delay(PULSE_DURATION);
-    pinMode(pin, INPUT);
-    if (i == 0) delay(DOUBLE_INTERVAL);
-  }
+// ==================== GPIO2板载LED测试函数 ====================
+void testGPIO2Once() {
+  Serial.println("[GPIO2测试] LOW脉冲×1");
+  digitalWrite(PIN_TEST_LED, LOW);
+  delay(PULSE_DURATION);
+  digitalWrite(PIN_TEST_LED, HIGH);
+  Serial.println("[GPIO2测试] 完成");
+}
+
+void testGPIO2Twice() {
+  Serial.println("[GPIO2测试] LOW脉冲×2");
+  digitalWrite(PIN_TEST_LED, LOW);
+  delay(PULSE_DURATION);
+  digitalWrite(PIN_TEST_LED, HIGH);
+  delay(DOUBLE_INTERVAL);
+  digitalWrite(PIN_TEST_LED, LOW);
+  delay(PULSE_DURATION);
+  digitalWrite(PIN_TEST_LED, HIGH);
+  Serial.println("[GPIO2测试] 完成");
 }
 
 // ==================== MQTT发布 ====================
@@ -109,11 +122,7 @@ void checkAutoLock() {
   if (autoLockFlag && (millis() - autoLockStart > AUTO_LOCK_MS)) {
     autoLockFlag = false;
     Serial.println("[自动锁车] 时间到！执行锁车...");
-    // 使用GPIO13锁车（实际钥匙控制）
-    pinMode(13, OUTPUT);
-    digitalWrite(13, LOW);
-    delay(300);
-    pinMode(13, INPUT);
+    testGPIO13Once();  // 用GPIO13闪光代替
     mqttPublish("auto_locked");
   }
 }
@@ -130,44 +139,33 @@ void handleCommand(const String& cmd) {
 
   if (cmd == "lock") {
     Serial.println(">>> 执行：锁车（GPIO13单次300ms）");
-    pinMode(13, OUTPUT);
-    digitalWrite(13, LOW);
-    delay(300);
-    pinMode(13, INPUT);
+    testGPIO13Once();
     autoLockFlag = false;
     mqttPublish("locked");
   }
   else if (cmd == "unlock") {
     Serial.println(">>> 执行：解锁（GPIO13两次300ms，间隔100ms）");
-    pinMode(13, OUTPUT);
-    digitalWrite(13, LOW);
-    delay(300);
-    pinMode(13, INPUT);
-    delay(100);
-    pinMode(13, OUTPUT);
-    digitalWrite(13, LOW);
-    delay(300);
-    pinMode(13, INPUT);
+    testGPIO13Twice();
     resetAutoLockTimer();
     mqttPublish("unlocked");
   }
   else if (cmd == "left_open") {
-    Serial.println(">>> 执行：左鹰翼门（GPIO14两次300ms）");
-    testGPIO2Twice();  // 用GPIO2闪光演示
+    Serial.println(">>> 执行：左鹰翼门（GPIO2闪光）");
+    testGPIO2Twice();
     mqttPublish("left_open_ok");
   }
   else if (cmd == "right_open") {
-    Serial.println(">>> 执行：右鹰翼门（GPIO25两次300ms）");
+    Serial.println(">>> 执行：右鹰翼门（GPIO2闪光）");
     testGPIO2Twice();
     mqttPublish("right_open_ok");
   }
   else if (cmd == "trunk_open") {
-    Serial.println(">>> 执行：后备箱（GPIO26两次300ms）");
+    Serial.println(">>> 执行：后备箱（GPIO2闪光）");
     testGPIO2Twice();
     mqttPublish("trunk_open_ok");
   }
   else if (cmd == "frunk_open") {
-    Serial.println(">>> 执行：前备箱（GPIO27两次300ms）");
+    Serial.println(">>> 执行：前备箱（GPIO2闪光）");
     testGPIO2Twice();
     mqttPublish("frunk_open_ok");
   }
@@ -179,10 +177,16 @@ void handleCommand(const String& cmd) {
     mqttPublish("heartbeat_ok");
   }
   else if (cmd == "test_led") {
-    // GPIO2 LED测试指令
+    // GPIO2 LED测试
     Serial.println(">>> 执行：GPIO2 LED测试");
     testGPIO2Twice();
     mqttPublish("test_led_ok");
+  }
+  else if (cmd == "test_gpio13") {
+    // GPIO13 LED测试
+    Serial.println(">>> 执行：GPIO13 LED测试");
+    testGPIO13Twice();
+    mqttPublish("test_gpio13_ok");
   }
   else {
     Serial.printf("[警告] 未知指令: '%s'\n", cmd.c_str());
@@ -214,21 +218,24 @@ void setup() {
   ML307R.begin(115200, SERIAL_8N1, 16, 17);
 
   Serial.println("╔══════════════════════════════════════╗");
-  Serial.println("║  特斯拉 ESP32固件 v2.1 (GPIO2测试版)  ║");
+  Serial.println("║  特斯拉 ESP32固件 v2.2 (GPIO13修复版) ║");
   Serial.println("╚══════════════════════════════════════╝");
 
-  // 初始化GPIO2为输出（板载LED）
+  // GPIO13初始化为OUTPUT+HIGH（稳定3.3V）
   pinMode(PIN_LOCK, OUTPUT);
-  digitalWrite(PIN_LOCK, HIGH);  // 默认LED灭
-  Serial.println("[初始化] GPIO2已设为输出(HIGH=LED灭)");
+  digitalWrite(PIN_LOCK, HIGH);  // 默认3.3V（LED灭）
+  Serial.println("[初始化] GPIO13已设为OUTPUT+HIGH(3.3V)");
 
-  // GPIO13初始化为输入（高阻态，不影响钥匙）
-  pinMode(13, INPUT);
+  // GPIO2初始化为OUTPUT+HIGH（板载LED）
+  pinMode(PIN_TEST_LED, OUTPUT);
+  digitalWrite(PIN_TEST_LED, HIGH);
+  Serial.println("[初始化] GPIO2已设为OUTPUT+HIGH");
+
+  // 其他GPIO初始化为INPUT（高阻态）
   pinMode(14, INPUT);
   pinMode(25, INPUT);
   pinMode(26, INPUT);
   pinMode(27, INPUT);
-  Serial.println("[初始化] GPIO13/14/25/26/27已设为INPUT(高阻态)");
 
   delay(2000);
 
@@ -260,11 +267,11 @@ void setup() {
 
   // 上线通知
   Serial.println("=== 发送上线状态 ===");
-  mqttPublish("ESP32已上线(v2.1-GPIO2测试版)");
+  mqttPublish("ESP32已上线(v2.2-GPIO13修复版)");
 
   Serial.println("╔══════════════════════════════════════╗");
   Serial.println("║  初始化完成，进入指令监听模式         ║");
-  Serial.println("║  测试指令: test_led (GPIO2闪光)       ║");
+  Serial.println("║  测试指令: test_gpio13 (GPIO13闪光)   ║");
   Serial.println("╚══════════════════════════════════════╝");
 }
 
